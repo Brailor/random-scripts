@@ -1,0 +1,49 @@
+#!/bin/bash
+
+REGISTRY_PORT=4873
+REGISTRY_URL="http://localhost:$REGISTRY_PORT"
+# function called by trap
+trap_handler() {
+    docker container inspect "$VERDACCIO_CONTINAER_ID" > /dev/null
+
+    # check if we have the registry running
+    if [[ "$?" -eq 0 ]]; then
+        echo "Stopping container for now..."
+        docker container stop "$VERDACCIO_CONTINAER_ID"
+    fi
+
+    exit 0
+}
+
+trap 'trap_handler' SIGINT
+
+# create a local registry first
+export VERDACCIO_CONTINAER_ID="$(docker run --detach --rm --name verdaccio -p $REGISTRY_PORT:$REGISTRY_PORT verdaccio/verdaccio)"
+echo "Registry container id: "
+echo "$VERDACCIO_CONTINAER_ID"
+
+# add local registry to the closest .npmrc
+# echo "registry=$REGISTRY_URL" >> .npmrc
+npm set registry "$REGISTRY_URL"
+
+echo "Waiting for registry to come online..."
+is_available=0
+while [[ "$is_available" -ne 1 ]]
+do
+    curl --silent "$REGISTRY_URL" > /dev/null
+
+    if [[ "$?" -eq 0 ]]; then
+        is_available=1
+    fi
+    echo "Registry seems to be offline, trying again in 1 second"
+    sleep 1
+done
+
+echo "Registry is online, continuing with adding defualt user to it."
+# add default user to the newly created local registry
+npm adduser --registry "$REGISTRY_URL"
+
+if [[ "$?" -ne 0 ]]; then
+    echo "Stopping container for now..."
+    docker container stop "$VERDACCIO_CONTINAER_ID"
+fi
